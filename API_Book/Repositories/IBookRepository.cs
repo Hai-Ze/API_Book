@@ -13,8 +13,17 @@ namespace API_Book.Repositories
         Task<IEnumerable<Book>> GetBooksByGenreAsync(string genre);
         Task<IEnumerable<Book>> GetBooksByAuthorAsync(string author);
 
-        // Thêm method phân trang
+        // Phân trang cơ bản
         Task<IEnumerable<Book>> GetBooksPagedAsync(int page, int pageSize);
         Task<int> GetTotalBooksCountAsync();
+
+        // Phân trang nâng cao
+        Task<IEnumerable<Book>> GetTopRatedBooksPagedAsync(int page, int pageSize);
+        Task<IEnumerable<Book>> SearchBooksPagedAsync(string searchTerm, int page, int pageSize);
+        Task<int> GetSearchResultsCountAsync(string searchTerm);
+
+        // Utility methods
+        Task<bool> IsConnectionHealthyAsync();
+        Task<object> GetDatabaseInfoAsync();
     }
 }

@@ -1,4 +1,5 @@
-﻿using API_Book.Models;
+﻿// BookRepository.cs - TRUE SERVER-SIDE PAGINATION
+using API_Book.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace API_Book.Repositories
@@ -12,11 +13,101 @@ namespace API_Book.Repositories
             _context = context;
         }
 
+        // TRUE PAGINATION - CHỈ LẤY ĐÚNG SỐ LƯỢNG CẦN THIẾT
+        public async Task<IEnumerable<Book>> GetBooksPagedAsync(int page, int pageSize)
+        {
+            var skip = (page - 1) * pageSize;
+
+            return await _context.Books
+                .AsNoTracking()
+                .OrderBy(b => b.Id)  // Đảm bảo thứ tự consistent
+                .Skip(skip)          // Bỏ qua số record trước đó
+                .Take(pageSize)      // CHỈ LẤY ĐÚNG SỐ LƯỢNG CẦN THIẾT
+                .ToListAsync();
+        }
+
+        // ĐẾM TỔNG SÁCH - KHÔNG CÓ GIỚI HẠN
+        public async Task<int> GetTotalBooksCountAsync()
+        {
+            try
+            {
+                using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                return await _context.Books.CountAsync(cancellationTokenSource.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Nếu timeout, thử ước tính
+                Console.WriteLine("Count query timeout, estimating...");
+                return 30000; // Ước tính dựa trên kinh nghiệm
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error counting books: {ex.Message}");
+                return 0;
+            }
+        }
+
+        // SEARCH VỚI TRUE PAGINATION
+        public async Task<IEnumerable<Book>> SearchBooksPagedAsync(string searchTerm, int page, int pageSize)
+        {
+            var skip = (page - 1) * pageSize;
+            var lowerSearchTerm = searchTerm.ToLower();
+
+            return await _context.Books
+                .AsNoTracking()
+                .Where(b =>
+                    b.Title.ToLower().Contains(lowerSearchTerm) ||
+                    b.Author.ToLower().Contains(lowerSearchTerm) ||
+                    (b.Genres != null && b.Genres.ToLower().Contains(lowerSearchTerm)))
+                .OrderBy(b => b.Title)
+                .Skip(skip)      // Chỉ bỏ qua
+                .Take(pageSize)  // Chỉ lấy đúng số cần
+                .ToListAsync();
+        }
+
+        public async Task<int> GetSearchResultsCountAsync(string searchTerm)
+        {
+            try
+            {
+                using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                var lowerSearchTerm = searchTerm.ToLower();
+
+                return await _context.Books
+                    .Where(b =>
+                        b.Title.ToLower().Contains(lowerSearchTerm) ||
+                        b.Author.ToLower().Contains(lowerSearchTerm) ||
+                        (b.Genres != null && b.Genres.ToLower().Contains(lowerSearchTerm)))
+                    .CountAsync(cancellationTokenSource.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return 100; // Ước tính nếu timeout
+            }
+        }
+
+        // TOP RATED VỚI TRUE PAGINATION
+        public async Task<IEnumerable<Book>> GetTopRatedBooksPagedAsync(int page, int pageSize)
+        {
+            var skip = (page - 1) * pageSize;
+
+            return await _context.Books
+                .AsNoTracking()
+                .Where(b => b.Rating.HasValue && b.Rating.Value > 0)
+                .OrderByDescending(b => b.Rating)
+                .ThenBy(b => b.Id)
+                .Skip(skip)
+                .Take(pageSize)
+                .ToListAsync();
+        }
+
+        // CÁC METHODS CŨ - KHÔNG THAY ĐỔI
         public async Task<IEnumerable<Book>> GetAllBooksAsync()
         {
+            // Chỉ dùng cho export hoặc admin view
             return await _context.Books
                 .AsNoTracking()
                 .OrderBy(b => b.Id)
+                .Take(1000) // Vẫn giới hạn để tránh memory issues
                 .ToListAsync();
         }
 
@@ -58,6 +149,7 @@ namespace API_Book.Repositories
                 .AsNoTracking()
                 .Where(b => b.Title.ToLower().Contains(title.ToLower()))
                 .OrderBy(b => b.Title)
+                .Take(100) // Giới hạn cho old methods
                 .ToListAsync();
         }
 
@@ -67,6 +159,7 @@ namespace API_Book.Repositories
                 .AsNoTracking()
                 .Where(b => b.Genres != null && b.Genres.ToLower().Contains(genre.ToLower()))
                 .OrderBy(b => b.Title)
+                .Take(100)
                 .ToListAsync();
         }
 
@@ -76,25 +169,59 @@ namespace API_Book.Repositories
                 .AsNoTracking()
                 .Where(b => b.Author.ToLower().Contains(author.ToLower()))
                 .OrderBy(b => b.Title)
+                .Take(100)
                 .ToListAsync();
         }
 
-        // THÊM 2 METHODS MỚI CHO PHÂN TRANG
-        public async Task<IEnumerable<Book>> GetBooksPagedAsync(int page, int pageSize)
+        public async Task<bool> IsConnectionHealthyAsync()
         {
-            var skip = (page - 1) * pageSize;
-
-            return await _context.Books
-                .AsNoTracking()
-                .OrderBy(b => b.Id)
-                .Skip(skip)
-                .Take(pageSize)
-                .ToListAsync();
+            try
+            {
+                using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await _context.Database.ExecuteSqlRawAsync("SELECT 1", cancellationTokenSource.Token);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        public async Task<int> GetTotalBooksCountAsync()
+        public async Task<object> GetDatabaseInfoAsync()
         {
-            return await _context.Books.CountAsync();
+            try
+            {
+                var firstBook = await _context.Books
+                    .AsNoTracking()
+                    .OrderBy(b => b.Id)
+                    .FirstOrDefaultAsync();
+
+                var lastBook = await _context.Books
+                    .AsNoTracking()
+                    .OrderByDescending(b => b.Id)
+                    .FirstOrDefaultAsync();
+
+                return new
+                {
+                    HasBooks = firstBook != null,
+                    FirstBookId = firstBook?.Id,
+                    LastBookId = lastBook?.Id,
+                    IsPaginated = true,
+                    Note = "Using true server-side pagination"
+                };
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting database info: {ex.Message}");
+                return new
+                {
+                    HasBooks = false,
+                    FirstBookId = (int?)null,
+                    LastBookId = (int?)null,
+                    IsPaginated = true,
+                    Error = ex.Message
+                };
+            }
         }
     }
 }

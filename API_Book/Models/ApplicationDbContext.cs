@@ -21,8 +21,8 @@ namespace API_Book.Models
                 entity.HasKey(e => e.Id);
 
                 // Cấu hình kiểu dữ liệu cho PostgreSQL
-                entity.Property(e => e.Price).HasColumnType("real");
-                entity.Property(e => e.Rating).HasColumnType("real");
+                entity.Property(e => e.Price).HasColumnType("numeric(10,2)"); 
+                entity.Property(e => e.Rating).HasColumnType("numeric(3,1)");
             });
         }
     }
