@@ -1,7 +1,11 @@
 ﻿using API_Book.Models;
 using API_Book.Repositories;
+using API_Book.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,18 +16,15 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
-        // Cấu hình timeout cho connection
-        npgsqlOptions.CommandTimeout(10); // 10 giây thay vì 30 giây mặc định
+        npgsqlOptions.CommandTimeout(10);
         npgsqlOptions.EnableRetryOnFailure(
             maxRetryCount: 3,
             maxRetryDelay: TimeSpan.FromSeconds(5),
             errorCodesToAdd: null);
     });
 
-    // Tắt tracking để tăng performance
     options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
 
-    // Cấu hình logging chi tiết hơn trong development
     if (builder.Environment.IsDevelopment())
     {
         options.EnableSensitiveDataLogging();
@@ -31,26 +32,61 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     }
 });
 
-// Đăng ký Repository
+// Đăng ký Repositories
 builder.Services.AddScoped<IBookRepository, BookRepository>();
+
+// Đăng ký Services (MỚI)
+builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+
+
+// Cấu hình JWT Authentication (MỚI)
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "your-super-secret-jwt-key-here-minimum-32-characters-long";
+var key = Encoding.ASCII.GetBytes(jwtKey);
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = false; // Cho development
+    options.SaveToken = true;
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(key),
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero
+    };
+});
+
+// Cấu hình Authorization (MỚI)
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+    options.AddPolicy("CustomerOnly", policy => policy.RequireRole("Customer"));
+});
 
 // Cấu hình Controllers
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        options.JsonSerializerOptions.PropertyNamingPolicy = null; // Giữ nguyên tên property
+        options.JsonSerializerOptions.PropertyNamingPolicy = null;
         options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
     });
 
-// Cấu hình Swagger chi tiết
+// Cấu hình Swagger với JWT support (CẬP NHẬT)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title = "BookStore API",
+        Title = "BookStore API with Google Auth",
         Version = "v1",
-        Description = "API for managing books in bookstore (Optimized for 30k+ records)",
+        Description = "API for managing books with Google OAuth authentication",
         Contact = new OpenApiContact
         {
             Name = "BookStore Team",
@@ -58,11 +94,35 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 
-    // Cấu hình để Swagger hiển thị example values
+    // Thêm JWT Authentication cho Swagger
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+
     c.EnableAnnotations();
 });
 
-// Cấu hình CORS chi tiết
+// Cấu hình CORS chi tiết (CẬP NHẬT)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowSpecificOrigins", policy =>
@@ -79,7 +139,6 @@ builder.Services.AddCors(options =>
             .AllowCredentials();
     });
 
-    // Policy cho development - cho phép tất cả
     options.AddPolicy("AllowAll", policy =>
     {
         policy.AllowAnyOrigin()
@@ -94,7 +153,7 @@ builder.Services.AddResponseCompression(options =>
     options.EnableForHttps = true;
 });
 
-// Cấu hình Memory Cache để cache kết quả
+// Cấu hình Memory Cache
 builder.Services.AddMemoryCache();
 
 var app = builder.Build();
@@ -106,56 +165,58 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "BookStore API V1");
-        c.RoutePrefix = string.Empty; // Swagger UI ở root path
+        c.RoutePrefix = string.Empty;
         c.DocumentTitle = "BookStore API Documentation";
         c.DisplayRequestDuration();
     });
 
-    // Sử dụng CORS "AllowAll" trong development
     app.UseCors("AllowAll");
 }
 else
 {
-    // Production - sử dụng CORS hạn chế
     app.UseCors("AllowSpecificOrigins");
 }
 
 app.UseResponseCompression();
 app.UseHttpsRedirection();
+
+// Thêm Authentication & Authorization middleware (MỚI)
+app.UseAuthentication();
 app.UseAuthorization();
 
 // Map controllers
 app.MapControllers();
 
-// Endpoint mặc định với thông tin performance
+// Endpoint mặc định với thông tin về Authentication (CẬP NHẬT)
 app.MapGet("/", () => new
 {
-    Message = "BookStore API is running!",
+    Message = "BookStore API with Google Authentication is running!",
     Documentation = "/swagger",
-    Performance = new
+    Authentication = new
     {
-        MaxRecords = 1000,
-        DefaultPageSize = 20,
-        MaxPageSize = 50,
-        Note = "Optimized for large datasets (30k+ books)"
+        GoogleLogin = "/api/auth/google-login",
+        VerifyToken = "/api/auth/verify",
+        CurrentUser = "/api/auth/me",
+        AdminTest = "/api/auth/admin-test"
     },
-    Endpoints = new
+    BookEndpoints = new
     {
         Books = "/api/BookApi/paged",
         Search = "/api/BookApi/search?q=query",
         TopRated = "/api/BookApi/top-rated",
         QuickStats = "/api/BookApi/quick-stats"
-    }
+    },
+    Note = "Use Google OAuth for authentication. Admin emails are configured in GoogleAuthService."
 });
 
-// Thêm middleware để log slow queries
+// Middleware để log slow queries
 app.Use(async (context, next) =>
 {
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
     await next();
     stopwatch.Stop();
 
-    if (stopwatch.ElapsedMilliseconds > 5000) // Log requests > 5 seconds
+    if (stopwatch.ElapsedMilliseconds > 5000)
     {
         var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
         logger.LogWarning($"Slow request: {context.Request.Path} took {stopwatch.ElapsedMilliseconds}ms");

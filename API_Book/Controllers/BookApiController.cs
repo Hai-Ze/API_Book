@@ -1,8 +1,9 @@
-﻿// BookApiController.cs - TRUE PAGINATION CONTROLLER
-using API_Book.Models;
+﻿using API_Book.Models;
 using API_Book.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using Swashbuckle.AspNetCore.Annotations;
+using Microsoft.EntityFrameworkCore; // Thêm để xử lý DbUpdateException
+using System;
 
 namespace API_Book.Controllers
 {
@@ -18,9 +19,34 @@ namespace API_Book.Controllers
             _bookRepository = bookRepository;
         }
 
-        /// <summary>
-        /// TRUE SERVER-SIDE PAGINATION - Chỉ lấy đúng số sách cần thiết
-        /// </summary>
+        [HttpPost]
+        [SwaggerOperation(Summary = "Create new book")]
+        public async Task<ActionResult<Book>> CreateBook([FromBody] Book book)
+        {
+            try
+            {
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                var createdBook = await _bookRepository.AddBookAsync(book);
+                return CreatedAtAction(nameof(GetBookById), new { id = createdBook.Id }, createdBook);
+            }
+            catch (DbUpdateException ex) // Bắt lỗi cụ thể từ Entity Framework
+            {
+                var innerExceptionMessage = ex.InnerException?.Message ?? ex.Message;
+                Console.WriteLine($"DbUpdateException: {innerExceptionMessage}"); // Ghi log
+                return StatusCode(500, $"Internal server error: {innerExceptionMessage}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"General Exception: {ex.Message}"); // Ghi log
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Các phương thức khác giữ nguyên
         [HttpGet("paged")]
         [SwaggerOperation(
             Summary = "Get books with true server-side pagination",
@@ -30,14 +56,11 @@ namespace API_Book.Controllers
         {
             try
             {
-                // Validate parameters
                 if (page < 1) page = 1;
                 if (pageSize < 1) pageSize = 15;
-                if (pageSize > 100) pageSize = 100; // Giới hạn max để tránh abuse
+                if (pageSize > 100) pageSize = 100;
 
                 var startTime = DateTime.UtcNow;
-
-                // CHỈ LẤY ĐÚNG SỐ SÁCH CẦN THIẾT
                 var books = await _bookRepository.GetBooksPagedAsync(page, pageSize);
                 var totalBooks = await _bookRepository.GetTotalBooksCountAsync();
 
@@ -71,9 +94,6 @@ namespace API_Book.Controllers
             }
         }
 
-        /// <summary>
-        /// SEARCH VỚI TRUE PAGINATION
-        /// </summary>
         [HttpGet("search")]
         [SwaggerOperation(Summary = "Search books with true server-side pagination")]
         public async Task<ActionResult> SearchBooks(
@@ -93,8 +113,6 @@ namespace API_Book.Controllers
                 if (pageSize > 100) pageSize = 100;
 
                 var startTime = DateTime.UtcNow;
-
-                // CHỈ LẤY KẾT QUẢ TÌM KIẾM CHO TRANG HIỆN TẠI
                 var books = await _bookRepository.SearchBooksPagedAsync(q.Trim(), page, pageSize);
                 var totalBooks = await _bookRepository.GetSearchResultsCountAsync(q.Trim());
 
@@ -128,9 +146,6 @@ namespace API_Book.Controllers
             }
         }
 
-        /// <summary>
-        /// TOP RATED VỚI TRUE PAGINATION
-        /// </summary>
         [HttpGet("top-rated")]
         [SwaggerOperation(Summary = "Get top rated books with true pagination")]
         public async Task<ActionResult> GetTopRatedBooks([FromQuery] int page = 1, [FromQuery] int pageSize = 15)
@@ -142,9 +157,8 @@ namespace API_Book.Controllers
                 if (pageSize > 100) pageSize = 100;
 
                 var startTime = DateTime.UtcNow;
-
                 var books = await _bookRepository.GetTopRatedBooksPagedAsync(page, pageSize);
-                var totalBooks = await _bookRepository.GetTotalBooksCountAsync(); // Có thể tối ưu thêm
+                var totalBooks = await _bookRepository.GetTotalBooksCountAsync();
 
                 var loadTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
                 var totalPages = totalBooks > 0 ? (int)Math.Ceiling((double)totalBooks / pageSize) : 1;
@@ -174,7 +188,6 @@ namespace API_Book.Controllers
             }
         }
 
-        // CÁC METHODS CRUD KHÁC GIỮ NGUYÊN
         [HttpGet]
         [SwaggerOperation(Summary = "Get all books (limited for compatibility)")]
         public async Task<ActionResult<IEnumerable<Book>>> GetAllBooks()
@@ -204,26 +217,6 @@ namespace API_Book.Controllers
                 }
 
                 return Ok(book);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
-        }
-
-        [HttpPost]
-        [SwaggerOperation(Summary = "Create new book")]
-        public async Task<ActionResult<Book>> CreateBook([FromBody] Book book)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var createdBook = await _bookRepository.AddBookAsync(book);
-                return CreatedAtAction(nameof(GetBookById), new { id = createdBook.Id }, createdBook);
             }
             catch (Exception ex)
             {
@@ -283,9 +276,6 @@ namespace API_Book.Controllers
             }
         }
 
-        /// <summary>
-        /// QUICK STATS - CHỈ LẤY VÀI RECORDS MẪU
-        /// </summary>
         [HttpGet("quick-stats")]
         [SwaggerOperation(Summary = "Get quick statistics with sample data")]
         public async Task<ActionResult> GetQuickStats()
@@ -293,8 +283,6 @@ namespace API_Book.Controllers
             try
             {
                 var startTime = DateTime.UtcNow;
-
-                // Lấy 5 sách gần đây nhất và 5 sách rating cao nhất
                 var recentBooks = await _bookRepository.GetBooksPagedAsync(1, 5);
                 var topRatedBooks = await _bookRepository.GetTopRatedBooksPagedAsync(1, 5);
                 var totalBooks = await _bookRepository.GetTotalBooksCountAsync();

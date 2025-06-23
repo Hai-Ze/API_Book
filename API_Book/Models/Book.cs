@@ -9,6 +9,7 @@ namespace API_Book.Models
     {
         [Key]
         [Column("id")]
+        [DatabaseGenerated(DatabaseGeneratedOption.Identity)] // SỬA LỖI: Thêm Identity
         [Description("Unique identifier for the book")]
         public int Id { get; set; }
 
@@ -16,13 +17,13 @@ namespace API_Book.Models
         [StringLength(500, ErrorMessage = "Title cannot exceed 500 characters")]
         [Column("title")]
         [Description("Title of the book")]
-        public string Title { get; set; }
+        public string Title { get; set; } = string.Empty;
 
         [Required(ErrorMessage = "Author is required")]
         [StringLength(200, ErrorMessage = "Author name cannot exceed 200 characters")]
         [Column("author")]
         [Description("Author of the book")]
-        public string Author { get; set; }
+        public string Author { get; set; } = string.Empty;
 
         [Range(0, 999999.99, ErrorMessage = "Price must be between 0 and 999,999.99")]
         [Column("price")]
