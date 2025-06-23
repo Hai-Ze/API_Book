@@ -205,17 +205,30 @@ namespace API_Book.Controllers
         }
 
         /// <summary>
-        /// Lấy User ID từ JWT token
+        /// Lấy User ID từ JWT token - SỬA LỖI CHÍNH Ở ĐÂY
         /// </summary>
         private int GetCurrentUserId()
         {
             try
             {
-                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                return int.TryParse(userIdClaim, out var userId) ? userId : 0;
+                // Thử cả 2 cách để lấy user ID
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                                ?? User.FindFirst("sub")?.Value;  // ← FIX: thêm fallback
+
+                if (int.TryParse(userIdClaim, out var userId))
+                {
+                    return userId;
+                }
+
+                // Log để debug
+                Console.WriteLine($"Failed to parse user ID: {userIdClaim}");
+                Console.WriteLine($"Available claims: {string.Join(", ", User.Claims.Select(c => $"{c.Type}:{c.Value}"))}");
+
+                return 0;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"Error getting user ID: {ex.Message}");
                 return 0;
             }
         }

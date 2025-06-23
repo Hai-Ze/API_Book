@@ -37,6 +37,8 @@ builder.Services.AddScoped<IBookRepository, BookRepository>();
 
 // Đăng ký Services (MỚI)
 builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddScoped<ICartService, CartService>(); 
+
 
 
 // Cấu hình JWT Authentication (MỚI)

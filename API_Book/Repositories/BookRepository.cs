@@ -1,5 +1,4 @@
-﻿// BookRepository.cs - TRUE SERVER-SIDE PAGINATION
-using API_Book.Models;
+﻿using API_Book.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace API_Book.Repositories
@@ -23,6 +22,15 @@ namespace API_Book.Repositories
                 .OrderBy(b => b.Id)  // Đảm bảo thứ tự consistent
                 .Skip(skip)          // Bỏ qua số record trước đó
                 .Take(pageSize)      // CHỈ LẤY ĐÚNG SỐ LƯỢNG CẦN THIẾT
+                .Select(b => new Book
+                {
+                    Id = b.Id,
+                    Title = b.Title,
+                    Author = b.Author,
+                    Price = b.Price,
+                    CoverImg = b.CoverImg,
+                    RatingsByStars = b.RatingsByStars // Thêm trường ratingsByStars
+                })
                 .ToListAsync();
         }
 
@@ -62,6 +70,15 @@ namespace API_Book.Repositories
                 .OrderBy(b => b.Title)
                 .Skip(skip)      // Chỉ bỏ qua
                 .Take(pageSize)  // Chỉ lấy đúng số cần
+                .Select(b => new Book
+                {
+                    Id = b.Id,
+                    Title = b.Title,
+                    Author = b.Author,
+                    Price = b.Price,
+                    CoverImg = b.CoverImg,
+                    RatingsByStars = b.RatingsByStars // Thêm trường ratingsByStars
+                })
                 .ToListAsync();
         }
 
@@ -97,6 +114,15 @@ namespace API_Book.Repositories
                 .ThenBy(b => b.Id)
                 .Skip(skip)
                 .Take(pageSize)
+                .Select(b => new Book
+                {
+                    Id = b.Id,
+                    Title = b.Title,
+                    Author = b.Author,
+                    Price = b.Price,
+                    CoverImg = b.CoverImg,
+                    RatingsByStars = b.RatingsByStars // Thêm trường ratingsByStars
+                })
                 .ToListAsync();
         }
 
@@ -115,7 +141,17 @@ namespace API_Book.Repositories
         {
             return await _context.Books
                 .AsNoTracking()
-                .FirstOrDefaultAsync(b => b.Id == id);
+                .Where(b => b.Id == id)
+                .Select(b => new Book
+                {
+                    Id = b.Id,
+                    Title = b.Title,
+                    Author = b.Author,
+                    Price = b.Price,
+                    CoverImg = b.CoverImg,
+                    RatingsByStars = b.RatingsByStars
+                })
+                .FirstOrDefaultAsync();
         }
 
         public async Task<Book> AddBookAsync(Book book)

@@ -1,8 +1,9 @@
 ﻿using API_Book.Models;
 using API_Book.Repositories;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Swashbuckle.AspNetCore.Annotations;
 using Microsoft.EntityFrameworkCore; // Thêm để xử lý DbUpdateException
+using Swashbuckle.AspNetCore.Annotations;
 using System;
 
 namespace API_Book.Controllers
@@ -91,6 +92,28 @@ namespace API_Book.Controllers
                     Message = ex.Message,
                     IsPaginated = true
                 });
+            }
+        }
+
+        [HttpGet("{id}/details")]
+        [SwaggerOperation(Summary = "Get detailed book information including ratings")]
+        [Authorize] // Yêu cầu đăng nhập (tùy chọn, có thể bỏ nếu không cần)
+        public async Task<ActionResult<Book>> GetBookDetails(int id)
+        {
+            try
+            {
+                var book = await _bookRepository.GetBookByIdAsync(id);
+
+                if (book == null)
+                {
+                    return NotFound($"Book with ID {id} not found.");
+                }
+
+                return Ok(book);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
 
