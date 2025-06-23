@@ -149,6 +149,13 @@ namespace API_Book.Repositories
                     Author = b.Author,
                     Price = b.Price,
                     CoverImg = b.CoverImg,
+                    Description = b.Description,
+                    Genres = b.Genres,
+                    Rating = b.Rating,
+                    NumRatings = b.NumRatings,
+                    Pages = b.Pages,
+                    Language = b.Language,
+                    Series = b.Series,
                     RatingsByStars = b.RatingsByStars
                 })
                 .FirstOrDefaultAsync();
