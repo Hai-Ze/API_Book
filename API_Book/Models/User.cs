@@ -17,13 +17,12 @@ namespace API_Book.Models
         [Column("email")]
         public string Email { get; set; } = string.Empty;
 
-        [Required]
         [StringLength(100)]
         [Column("google_id")]
         public string GoogleId { get; set; } = string.Empty;
 
         [Required]
-        [StringLength(100)]
+        [StringLength(200)]
         [Column("full_name")]
         public string FullName { get; set; } = string.Empty;
 
