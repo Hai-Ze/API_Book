@@ -37,6 +37,43 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     }
 });
 
+// Thêm phần này vào Program.cs sau phần builder configuration
+
+// QUAN TRỌNG: Đăng ký HTTP Context Accessor để lấy user info
+builder.Services.AddHttpContextAccessor();
+
+// Cấu hình CORS chi tiết và mở rộng
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DevelopmentCors", policy =>
+    {
+        policy.WithOrigins(
+                "http://127.0.0.1:5500",
+                "http://localhost:5500",
+                "http://localhost:3000",
+                "http://localhost:8080",
+                "http://localhost:5173",
+                "http://localhost:4200",
+                "https://localhost:7000",
+                "https://localhost:7288",
+                "file://" // Cho phép local file access
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials()
+            .WithExposedHeaders("Content-Range", "X-Content-Range", "Authorization");
+    });
+
+    // Policy cho phép tất cả origins (chỉ dùng cho development)
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.SetIsOriginAllowed(_ => true) // Cho phép mọi origin
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
+
 // Đăng ký Repositories
 builder.Services.AddScoped<IBookRepository, BookRepository>();
 

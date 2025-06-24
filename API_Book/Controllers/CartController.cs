@@ -24,15 +24,20 @@ namespace API_Book.Controllers
         /// Thêm sách vào giỏ hàng
         /// </summary>
         [HttpPost("add")]
+        [Produces("application/json")]
+        [Consumes("application/json")]
         public async Task<ActionResult<AddToCartResponseDTO>> AddToCart([FromBody] AddToCartDTO request)
         {
             try
             {
+                // Log request info
+                _logger.LogInformation($"AddToCart called - BookId: {request.BookId}, Quantity: {request.Quantity}");
+
                 var userId = GetCurrentUserId();
                 if (userId == 0)
                 {
                     _logger.LogWarning("User ID not found in token");
-                    return Unauthorized(new
+                    return Unauthorized(new AddToCartResponseDTO
                     {
                         Success = false,
                         Message = "Vui lòng đăng nhập"
@@ -55,7 +60,7 @@ namespace API_Book.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error adding item to cart");
-                return StatusCode(500, new
+                return StatusCode(500, new AddToCartResponseDTO
                 {
                     Success = false,
                     Message = $"Lỗi server: {ex.Message}"
@@ -67,6 +72,7 @@ namespace API_Book.Controllers
         /// Lấy giỏ hàng của user hiện tại
         /// </summary>
         [HttpGet]
+        [HttpGet("")]
         public async Task<ActionResult<CartResponseDTO>> GetCart()
         {
             try
@@ -74,10 +80,13 @@ namespace API_Book.Controllers
                 var userId = GetCurrentUserId();
                 if (userId == 0)
                 {
-                    return Unauthorized(new CartResponseDTO
+                    return Ok(new CartResponseDTO
                     {
-                        Success = false,
-                        Message = "Vui lòng đăng nhập"
+                        Success = true,
+                        Message = "Giỏ hàng trống",
+                        Items = new List<CartItemDTO>(),
+                        TotalItems = 0,
+                        TotalAmount = 0
                     });
                 }
 
@@ -247,20 +256,39 @@ namespace API_Book.Controllers
         }
 
         /// <summary>
+        /// Test endpoint - không cần auth
+        /// </summary>
+        [HttpGet("test")]
+        [AllowAnonymous]
+        public ActionResult TestEndpoint()
+        {
+            return Ok(new
+            {
+                Success = true,
+                Message = "Cart endpoint is working",
+                Timestamp = DateTime.UtcNow
+            });
+        }
+
+        /// <summary>
         /// Lấy User ID từ JWT token - FIXED VERSION
         /// </summary>
         private int GetCurrentUserId()
         {
             try
             {
+                // Log all claims for debugging
+                var allClaims = User.Claims.Select(c => $"{c.Type}:{c.Value}").ToList();
+                _logger.LogInformation($"All claims: {string.Join(", ", allClaims)}");
+
                 // Thử tất cả các claim types có thể chứa user ID
                 var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                                 ?? User.FindFirst("sub")?.Value
                                 ?? User.FindFirst("user_id")?.Value
-                                ?? User.FindFirst("id")?.Value;
+                                ?? User.FindFirst("id")?.Value
+                                ?? User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
 
                 _logger.LogInformation($"Raw user ID claim: {userIdClaim}");
-                _logger.LogInformation($"Available claims: {string.Join(", ", User.Claims.Select(c => $"{c.Type}:{c.Value}"))}");
 
                 if (int.TryParse(userIdClaim, out var userId))
                 {
