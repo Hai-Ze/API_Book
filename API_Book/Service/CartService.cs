@@ -17,20 +17,25 @@ namespace API_Book.Services
     public class CartService : ICartService
     {
         private readonly ApplicationDbContext _context;
+        private readonly ILogger<CartService> _logger;
 
-        public CartService(ApplicationDbContext context)
+        public CartService(ApplicationDbContext context, ILogger<CartService> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
         public async Task<AddToCartResponseDTO> AddToCartAsync(int userId, AddToCartDTO request)
         {
             try
             {
+                _logger.LogInformation($"Adding book {request.BookId} to cart for user {userId}");
+
                 // Kiểm tra book có tồn tại không
                 var book = await _context.Books.FindAsync(request.BookId);
                 if (book == null)
                 {
+                    _logger.LogWarning($"Book {request.BookId} not found");
                     return new AddToCartResponseDTO
                     {
                         Success = false,
@@ -50,6 +55,7 @@ namespace API_Book.Services
                     existingItem.UpdatedAt = DateTime.UtcNow;
 
                     await _context.SaveChangesAsync();
+                    _logger.LogInformation($"Updated quantity for book {request.BookId} in user {userId}'s cart");
 
                     var totalItems = await GetCartItemsCountAsync(userId);
                     return new AddToCartResponseDTO
@@ -74,6 +80,7 @@ namespace API_Book.Services
 
                     _context.CartItems.Add(newItem);
                     await _context.SaveChangesAsync();
+                    _logger.LogInformation($"Added book {request.BookId} to user {userId}'s cart");
 
                     var totalItems = await GetCartItemsCountAsync(userId);
                     return new AddToCartResponseDTO
@@ -87,6 +94,7 @@ namespace API_Book.Services
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, $"Error adding book {request.BookId} to cart for user {userId}");
                 return new AddToCartResponseDTO
                 {
                     Success = false,
@@ -133,6 +141,7 @@ namespace API_Book.Services
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, $"Error getting cart for user {userId}");
                 return new CartResponseDTO
                 {
                     Success = false,
@@ -149,16 +158,22 @@ namespace API_Book.Services
                 var cartItem = await _context.CartItems
                     .FirstOrDefaultAsync(ci => ci.Id == request.CartItemId && ci.UserId == userId);
 
-                if (cartItem == null) return false;
+                if (cartItem == null)
+                {
+                    _logger.LogWarning($"Cart item {request.CartItemId} not found for user {userId}");
+                    return false;
+                }
 
                 cartItem.Quantity = request.Quantity;
                 cartItem.UpdatedAt = DateTime.UtcNow;
 
                 await _context.SaveChangesAsync();
+                _logger.LogInformation($"Updated cart item {request.CartItemId} for user {userId}");
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _logger.LogError(ex, $"Error updating cart item {request.CartItemId} for user {userId}");
                 return false;
             }
         }
@@ -170,14 +185,20 @@ namespace API_Book.Services
                 var cartItem = await _context.CartItems
                     .FirstOrDefaultAsync(ci => ci.Id == cartItemId && ci.UserId == userId);
 
-                if (cartItem == null) return false;
+                if (cartItem == null)
+                {
+                    _logger.LogWarning($"Cart item {cartItemId} not found for user {userId}");
+                    return false;
+                }
 
                 _context.CartItems.Remove(cartItem);
                 await _context.SaveChangesAsync();
+                _logger.LogInformation($"Removed cart item {cartItemId} for user {userId}");
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _logger.LogError(ex, $"Error removing cart item {cartItemId} for user {userId}");
                 return false;
             }
         }
@@ -190,12 +211,18 @@ namespace API_Book.Services
                     .Where(ci => ci.UserId == userId)
                     .ToListAsync();
 
-                _context.CartItems.RemoveRange(cartItems);
-                await _context.SaveChangesAsync();
+                if (cartItems.Any())
+                {
+                    _context.CartItems.RemoveRange(cartItems);
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation($"Cleared cart for user {userId} - removed {cartItems.Count} items");
+                }
+
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _logger.LogError(ex, $"Error clearing cart for user {userId}");
                 return false;
             }
         }
@@ -204,12 +231,16 @@ namespace API_Book.Services
         {
             try
             {
-                return await _context.CartItems
+                var count = await _context.CartItems
                     .Where(ci => ci.UserId == userId)
                     .SumAsync(ci => ci.Quantity);
+
+                _logger.LogInformation($"Cart count for user {userId}: {count}");
+                return count;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _logger.LogError(ex, $"Error getting cart count for user {userId}");
                 return 0;
             }
         }

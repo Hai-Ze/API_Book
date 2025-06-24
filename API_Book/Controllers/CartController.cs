@@ -12,10 +12,12 @@ namespace API_Book.Controllers
     public class CartController : ControllerBase
     {
         private readonly ICartService _cartService;
+        private readonly ILogger<CartController> _logger;
 
-        public CartController(ICartService cartService)
+        public CartController(ICartService cartService, ILogger<CartController> logger)
         {
             _cartService = cartService;
+            _logger = logger;
         }
 
         /// <summary>
@@ -29,12 +31,15 @@ namespace API_Book.Controllers
                 var userId = GetCurrentUserId();
                 if (userId == 0)
                 {
-                    return Unauthorized(new AddToCartResponseDTO
+                    _logger.LogWarning("User ID not found in token");
+                    return Unauthorized(new
                     {
                         Success = false,
                         Message = "Vui lòng đăng nhập"
                     });
                 }
+
+                _logger.LogInformation($"Adding book {request.BookId} to cart for user {userId}");
 
                 var result = await _cartService.AddToCartAsync(userId, request);
 
@@ -49,7 +54,8 @@ namespace API_Book.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new AddToCartResponseDTO
+                _logger.LogError(ex, "Error adding item to cart");
+                return StatusCode(500, new
                 {
                     Success = false,
                     Message = $"Lỗi server: {ex.Message}"
@@ -80,6 +86,7 @@ namespace API_Book.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error getting cart");
                 return StatusCode(500, new CartResponseDTO
                 {
                     Success = false,
@@ -115,6 +122,7 @@ namespace API_Book.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error updating cart item");
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
@@ -137,7 +145,7 @@ namespace API_Book.Controllers
 
                 if (success)
                 {
-                    return Ok(new { Success = true, Message = "Đã xóa sách khỏi giỏ hàng" });
+                    return Ok(new { Success = true, Message = "Đã xóa khỏi giỏ hàng" });
                 }
                 else
                 {
@@ -146,6 +154,7 @@ namespace API_Book.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error removing cart item");
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
@@ -177,6 +186,7 @@ namespace API_Book.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error clearing cart");
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
@@ -200,35 +210,70 @@ namespace API_Book.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error getting cart count");
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
 
         /// <summary>
-        /// Lấy User ID từ JWT token - SỬA LỖI CHÍNH Ở ĐÂY
+        /// Test endpoint để debug user info
+        /// </summary>
+        [HttpGet("debug-user")]
+        public ActionResult DebugUser()
+        {
+            try
+            {
+                var claims = User.Claims.Select(c => new { c.Type, c.Value }).ToList();
+                var userId = GetCurrentUserId();
+
+                return Ok(new
+                {
+                    Success = true,
+                    UserId = userId,
+                    Claims = claims,
+                    IsAuthenticated = User.Identity?.IsAuthenticated,
+                    AuthenticationType = User.Identity?.AuthenticationType
+                });
+            }
+            catch (Exception ex)
+            {
+                return Ok(new
+                {
+                    Success = false,
+                    Error = ex.Message,
+                    Claims = new List<object>()
+                });
+            }
+        }
+
+        /// <summary>
+        /// Lấy User ID từ JWT token - FIXED VERSION
         /// </summary>
         private int GetCurrentUserId()
         {
             try
             {
-                // Thử cả 2 cách để lấy user ID
+                // Thử tất cả các claim types có thể chứa user ID
                 var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                                ?? User.FindFirst("sub")?.Value;  // ← FIX: thêm fallback
+                                ?? User.FindFirst("sub")?.Value
+                                ?? User.FindFirst("user_id")?.Value
+                                ?? User.FindFirst("id")?.Value;
+
+                _logger.LogInformation($"Raw user ID claim: {userIdClaim}");
+                _logger.LogInformation($"Available claims: {string.Join(", ", User.Claims.Select(c => $"{c.Type}:{c.Value}"))}");
 
                 if (int.TryParse(userIdClaim, out var userId))
                 {
+                    _logger.LogInformation($"Successfully parsed user ID: {userId}");
                     return userId;
                 }
 
-                // Log để debug
-                Console.WriteLine($"Failed to parse user ID: {userIdClaim}");
-                Console.WriteLine($"Available claims: {string.Join(", ", User.Claims.Select(c => $"{c.Type}:{c.Value}"))}");
-
+                _logger.LogWarning($"Failed to parse user ID from claim: {userIdClaim}");
                 return 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error getting user ID: {ex.Message}");
+                _logger.LogError(ex, "Error getting user ID from token");
                 return 0;
             }
         }
