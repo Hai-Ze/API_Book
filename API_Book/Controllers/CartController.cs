@@ -3,40 +3,118 @@ using Microsoft.AspNetCore.Authorization;
 using API_Book.Models.DTOs;
 using API_Book.Services;
 using System.Security.Claims;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace API_Book.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize] // Tất cả endpoints cần đăng nhập
+    [Authorize]
     public class CartController : ControllerBase
     {
         private readonly ICartService _cartService;
         private readonly ILogger<CartController> _logger;
+        private readonly IMemoryCache _cache;
 
-        public CartController(ICartService cartService, ILogger<CartController> logger)
+        public CartController(ICartService cartService, ILogger<CartController> logger, IMemoryCache cache)
         {
             _cartService = cartService;
             _logger = logger;
+            _cache = cache;
         }
 
         /// <summary>
-        /// Thêm sách vào giỏ hàng
+        /// OPTIMIZED: Get cart with caching
         /// </summary>
-        [HttpPost("add")]
-        [Produces("application/json")]
-        [Consumes("application/json")]
-        public async Task<ActionResult<AddToCartResponseDTO>> AddToCart([FromBody] AddToCartDTO request)
+        [HttpGet]
+        [ResponseCache(Duration = 10, VaryByHeader = "Authorization")] // HTTP cache
+        public async Task<ActionResult<CartResponseDTO>> GetCart()
         {
+            var requestStart = DateTime.UtcNow;
+            var requestId = Guid.NewGuid().ToString("N")[..8];
+
+            _logger.LogInformation($"[{requestId}] GetCart request started");
+
             try
             {
-                // Log request info
-                _logger.LogInformation($"AddToCart called - BookId: {request.BookId}, Quantity: {request.Quantity}");
-
                 var userId = GetCurrentUserId();
                 if (userId == 0)
                 {
-                    _logger.LogWarning("User ID not found in token");
+                    _logger.LogWarning($"[{requestId}] No valid user ID found");
+                    return Ok(new CartResponseDTO
+                    {
+                        Success = true,
+                        Message = "Giỏ hàng trống - chưa đăng nhập",
+                        Items = new List<CartItemDTO>(),
+                        TotalItems = 0,
+                        TotalAmount = 0
+                    });
+                }
+
+                // OPTIMIZATION 1: Memory cache with user-specific key
+                var cacheKey = $"cart_{userId}";
+
+                if (_cache.TryGetValue(cacheKey, out CartResponseDTO? cachedResult) && cachedResult != null)
+                {
+                    var cacheTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                    _logger.LogInformation($"[{requestId}] Cart served from cache in {cacheTime}ms");
+
+                    // Add cache indicator
+                    cachedResult.Message = $"Cached cart ({cacheTime:F0}ms)";
+                    return Ok(cachedResult);
+                }
+
+                // OPTIMIZATION 2: Fast service call
+                var result = await _cartService.GetUserCartAsync(userId);
+
+                // OPTIMIZATION 3: Cache successful results for 30 seconds
+                if (result.Success)
+                {
+                    var cacheOptions = new MemoryCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30),
+                        SlidingExpiration = TimeSpan.FromSeconds(10),
+                        Priority = CacheItemPriority.Normal
+                    };
+
+                    _cache.Set(cacheKey, result, cacheOptions);
+                }
+
+                var totalTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogInformation($"[{requestId}] GetCart completed in {totalTime}ms");
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                var errorTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogError(ex, $"[{requestId}] GetCart failed after {errorTime}ms");
+
+                return StatusCode(500, new CartResponseDTO
+                {
+                    Success = false,
+                    Message = $"Lỗi server: {ex.Message}",
+                    Items = new List<CartItemDTO>()
+                });
+            }
+        }
+
+        /// <summary>
+        /// OPTIMIZED: Add to cart with cache invalidation
+        /// </summary>
+        [HttpPost("add")]
+        public async Task<ActionResult<AddToCartResponseDTO>> AddToCart([FromBody] AddToCartDTO request)
+        {
+            var requestStart = DateTime.UtcNow;
+            var requestId = Guid.NewGuid().ToString("N")[..8];
+
+            _logger.LogInformation($"[{requestId}] AddToCart: BookId={request.BookId}, Quantity={request.Quantity}");
+
+            try
+            {
+                var userId = GetCurrentUserId();
+                if (userId == 0)
+                {
                     return Unauthorized(new AddToCartResponseDTO
                     {
                         Success = false,
@@ -44,22 +122,26 @@ namespace API_Book.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Adding book {request.BookId} to cart for user {userId}");
-
                 var result = await _cartService.AddToCartAsync(userId, request);
 
+                // OPTIMIZATION: Invalidate cache after successful add
                 if (result.Success)
                 {
-                    return Ok(result);
+                    var cacheKey = $"cart_{userId}";
+                    _cache.Remove(cacheKey);
+                    _logger.LogInformation($"[{requestId}] Cache invalidated for user {userId}");
                 }
-                else
-                {
-                    return BadRequest(result);
-                }
+
+                var totalTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogInformation($"[{requestId}] AddToCart completed in {totalTime}ms");
+
+                return result.Success ? Ok(result) : BadRequest(result);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error adding item to cart");
+                var errorTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogError(ex, $"[{requestId}] AddToCart failed after {errorTime}ms");
+
                 return StatusCode(500, new AddToCartResponseDTO
                 {
                     Success = false,
@@ -69,47 +151,14 @@ namespace API_Book.Controllers
         }
 
         /// <summary>
-        /// Lấy giỏ hàng của user hiện tại
-        /// </summary>
-        [HttpGet]
-        [HttpGet("")]
-        public async Task<ActionResult<CartResponseDTO>> GetCart()
-        {
-            try
-            {
-                var userId = GetCurrentUserId();
-                if (userId == 0)
-                {
-                    return Ok(new CartResponseDTO
-                    {
-                        Success = true,
-                        Message = "Giỏ hàng trống",
-                        Items = new List<CartItemDTO>(),
-                        TotalItems = 0,
-                        TotalAmount = 0
-                    });
-                }
-
-                var result = await _cartService.GetUserCartAsync(userId);
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting cart");
-                return StatusCode(500, new CartResponseDTO
-                {
-                    Success = false,
-                    Message = $"Lỗi server: {ex.Message}"
-                });
-            }
-        }
-
-        /// <summary>
-        /// Cập nhật số lượng item trong giỏ
+        /// OPTIMIZED: Update cart item with cache invalidation
         /// </summary>
         [HttpPut("update")]
         public async Task<ActionResult> UpdateCartItem([FromBody] UpdateCartDTO request)
         {
+            var requestStart = DateTime.UtcNow;
+            var requestId = Guid.NewGuid().ToString("N")[..8];
+
             try
             {
                 var userId = GetCurrentUserId();
@@ -120,28 +169,38 @@ namespace API_Book.Controllers
 
                 var success = await _cartService.UpdateCartItemAsync(userId, request);
 
+                // OPTIMIZATION: Invalidate cache after successful update
                 if (success)
                 {
-                    return Ok(new { Success = true, Message = "Cập nhật giỏ hàng thành công" });
+                    var cacheKey = $"cart_{userId}";
+                    _cache.Remove(cacheKey);
                 }
-                else
-                {
-                    return NotFound(new { Success = false, Message = "Không tìm thấy item trong giỏ hàng" });
-                }
+
+                var totalTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogInformation($"[{requestId}] UpdateCartItem completed in {totalTime}ms");
+
+                return success
+                    ? Ok(new { Success = true, Message = "Cập nhật thành công" })
+                    : NotFound(new { Success = false, Message = "Không tìm thấy item" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error updating cart item");
+                var errorTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogError(ex, $"[{requestId}] UpdateCartItem failed after {errorTime}ms");
+
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
 
         /// <summary>
-        /// Xóa item khỏi giỏ hàng
+        /// OPTIMIZED: Remove cart item with cache invalidation
         /// </summary>
         [HttpDelete("remove/{cartItemId}")]
         public async Task<ActionResult> RemoveFromCart(int cartItemId)
         {
+            var requestStart = DateTime.UtcNow;
+            var requestId = Guid.NewGuid().ToString("N")[..8];
+
             try
             {
                 var userId = GetCurrentUserId();
@@ -152,28 +211,38 @@ namespace API_Book.Controllers
 
                 var success = await _cartService.RemoveFromCartAsync(userId, cartItemId);
 
+                // OPTIMIZATION: Invalidate cache after successful removal
                 if (success)
                 {
-                    return Ok(new { Success = true, Message = "Đã xóa khỏi giỏ hàng" });
+                    var cacheKey = $"cart_{userId}";
+                    _cache.Remove(cacheKey);
                 }
-                else
-                {
-                    return NotFound(new { Success = false, Message = "Không tìm thấy item trong giỏ hàng" });
-                }
+
+                var totalTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogInformation($"[{requestId}] RemoveFromCart completed in {totalTime}ms");
+
+                return success
+                    ? Ok(new { Success = true, Message = "Đã xóa khỏi giỏ hàng" })
+                    : NotFound(new { Success = false, Message = "Không tìm thấy item" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error removing cart item");
+                var errorTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogError(ex, $"[{requestId}] RemoveFromCart failed after {errorTime}ms");
+
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
 
         /// <summary>
-        /// Xóa toàn bộ giỏ hàng
+        /// OPTIMIZED: Clear cart with cache invalidation
         /// </summary>
         [HttpDelete("clear")]
         public async Task<ActionResult> ClearCart()
         {
+            var requestStart = DateTime.UtcNow;
+            var requestId = Guid.NewGuid().ToString("N")[..8];
+
             try
             {
                 var userId = GetCurrentUserId();
@@ -184,28 +253,35 @@ namespace API_Book.Controllers
 
                 var success = await _cartService.ClearCartAsync(userId);
 
-                if (success)
-                {
-                    return Ok(new { Success = true, Message = "Đã xóa toàn bộ giỏ hàng" });
-                }
-                else
-                {
-                    return BadRequest(new { Success = false, Message = "Lỗi khi xóa giỏ hàng" });
-                }
+                // OPTIMIZATION: Always clear cache for this user
+                var cacheKey = $"cart_{userId}";
+                _cache.Remove(cacheKey);
+
+                var totalTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogInformation($"[{requestId}] ClearCart completed in {totalTime}ms");
+
+                return success
+                    ? Ok(new { Success = true, Message = "Đã xóa toàn bộ giỏ hàng" })
+                    : BadRequest(new { Success = false, Message = "Lỗi khi xóa giỏ hàng" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error clearing cart");
+                var errorTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogError(ex, $"[{requestId}] ClearCart failed after {errorTime}ms");
+
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
 
         /// <summary>
-        /// Lấy số lượng items trong giỏ hàng
+        /// OPTIMIZED: Get cart count with caching
         /// </summary>
         [HttpGet("count")]
+        [ResponseCache(Duration = 5, VaryByHeader = "Authorization")]
         public async Task<ActionResult> GetCartItemsCount()
         {
+            var requestStart = DateTime.UtcNow;
+
             try
             {
                 var userId = GetCurrentUserId();
@@ -214,90 +290,95 @@ namespace API_Book.Controllers
                     return Ok(new { Success = true, Count = 0 });
                 }
 
+                // OPTIMIZATION: Cache count separately (lighter than full cart)
+                var countCacheKey = $"cart_count_{userId}";
+
+                if (_cache.TryGetValue(countCacheKey, out int cachedCount))
+                {
+                    var cacheTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                    _logger.LogInformation($"Cart count served from cache in {cacheTime}ms");
+                    return Ok(new { Success = true, Count = cachedCount });
+                }
+
                 var count = await _cartService.GetCartItemsCountAsync(userId);
+
+                // Cache for 15 seconds
+                _cache.Set(countCacheKey, count, TimeSpan.FromSeconds(15));
+
+                var totalTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogInformation($"GetCartCount completed in {totalTime}ms");
+
                 return Ok(new { Success = true, Count = count });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting cart count");
+                var errorTime = (DateTime.UtcNow - requestStart).TotalMilliseconds;
+                _logger.LogError(ex, $"GetCartCount failed after {errorTime}ms");
+
                 return StatusCode(500, new { Success = false, Message = $"Lỗi server: {ex.Message}" });
             }
         }
 
         /// <summary>
-        /// Test endpoint để debug user info
+        /// Fast health check endpoint
         /// </summary>
-        [HttpGet("debug-user")]
-        public ActionResult DebugUser()
-        {
-            try
-            {
-                var claims = User.Claims.Select(c => new { c.Type, c.Value }).ToList();
-                var userId = GetCurrentUserId();
-
-                return Ok(new
-                {
-                    Success = true,
-                    UserId = userId,
-                    Claims = claims,
-                    IsAuthenticated = User.Identity?.IsAuthenticated,
-                    AuthenticationType = User.Identity?.AuthenticationType
-                });
-            }
-            catch (Exception ex)
-            {
-                return Ok(new
-                {
-                    Success = false,
-                    Error = ex.Message,
-                    Claims = new List<object>()
-                });
-            }
-        }
-
-        /// <summary>
-        /// Test endpoint - không cần auth
-        /// </summary>
-        [HttpGet("test")]
+        [HttpGet("health")]
         [AllowAnonymous]
-        public ActionResult TestEndpoint()
+        public ActionResult HealthCheck()
         {
             return Ok(new
             {
-                Success = true,
-                Message = "Cart endpoint is working",
-                Timestamp = DateTime.UtcNow
+                Status = "Healthy",
+                Timestamp = DateTime.UtcNow,
+                Version = "Optimized",
+                CacheStats = new
+                {
+                    // Basic cache info (if available)
+                    HasCache = _cache != null
+                }
             });
         }
 
         /// <summary>
-        /// Lấy User ID từ JWT token - FIXED VERSION
+        /// Debug endpoint for performance monitoring
+        /// </summary>
+        [HttpGet("debug")]
+        [Authorize(Roles = "Admin")]
+        public ActionResult Debug()
+        {
+            var userId = GetCurrentUserId();
+            var cacheKey = $"cart_{userId}";
+            var countCacheKey = $"cart_count_{userId}";
+
+            return Ok(new
+            {
+                UserId = userId,
+                Cache = new
+                {
+                    HasCartCache = _cache.TryGetValue(cacheKey, out _),
+                    HasCountCache = _cache.TryGetValue(countCacheKey, out _)
+                },
+                Performance = new
+                {
+                    Timestamp = DateTime.UtcNow,
+                    ServerTime = DateTime.UtcNow.ToString("HH:mm:ss.fff")
+                }
+            });
+        }
+
+        /// <summary>
+        /// OPTIMIZED: Get User ID from JWT token
         /// </summary>
         private int GetCurrentUserId()
         {
             try
             {
-                // Log all claims for debugging
-                var allClaims = User.Claims.Select(c => $"{c.Type}:{c.Value}").ToList();
-                _logger.LogInformation($"All claims: {string.Join(", ", allClaims)}");
-
-                // Thử tất cả các claim types có thể chứa user ID
+                // Try multiple claim types efficiently
                 var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                                 ?? User.FindFirst("sub")?.Value
-                                ?? User.FindFirst("user_id")?.Value
-                                ?? User.FindFirst("id")?.Value
-                                ?? User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")?.Value;
+                                ?? User.FindFirst("user_id")?.Value;
 
-                _logger.LogInformation($"Raw user ID claim: {userIdClaim}");
-
-                if (int.TryParse(userIdClaim, out var userId))
-                {
-                    _logger.LogInformation($"Successfully parsed user ID: {userId}");
-                    return userId;
-                }
-
-                _logger.LogWarning($"Failed to parse user ID from claim: {userIdClaim}");
-                return 0;
+                return int.TryParse(userIdClaim, out var userId) ? userId : 0;
             }
             catch (Exception ex)
             {
