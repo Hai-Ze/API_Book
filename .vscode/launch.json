@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run All (.NET + Chatbot)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "run-all",
+      "program": "${workspaceFolder}/API_Book/bin/Debug/net9.0/API_Book.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/API_Book",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    }
+  ]
+}
